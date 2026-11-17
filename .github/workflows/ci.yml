@@ -55,6 +55,29 @@ jobs:
           # https://github.com/gradle/gradle/pull/29686 (milestone 9.8.0).
           AWS_JAVA_V1_DISABLE_DEPRECATION_ANNOUNCEMENT: true
 
+  build-jdk21:
+    # The same build with Gradle running on JDK 21 (the last java-version entry). JDK 8 and 25 stay
+    # installed for the testGradle4 and testGradle9 launchers; the plugin compiles on the 17 toolchain
+    # with release 8.
+    runs-on: ubuntu-latest
+    env:
+      GRADLE_SWITCHES: --console=plain --info --stacktrace --warning-mode=all --no-daemon -Porg.gradle.java.installations.fromEnv=JAVA_HOME_8_X64,JAVA_HOME_25_X64
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: |
+            8
+            25
+            21
+      - name: setup-gradle
+        uses: gradle/actions/setup-gradle@v5
+      - name: build
+        run: ./gradlew ${{ env.GRADLE_SWITCHES }} build
+
   notify:
     if: (failure() || cancelled()) && github.event_name == 'schedule' && (github.repository_owner == 'openrewrite' || github.repository_owner == 'moderneinc')
     needs: [build]
