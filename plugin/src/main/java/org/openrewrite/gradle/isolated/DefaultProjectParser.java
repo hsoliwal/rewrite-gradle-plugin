@@ -91,6 +91,8 @@ import org.openrewrite.tree.ParsingExecutionContextView;
 import org.openrewrite.xml.tree.Xml;
 
 import java.io.*;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -1574,8 +1576,7 @@ public class DefaultProjectParser implements GradleProjectParser {
                     treeWalk.setFilter(PathFilter.create(PathUtils.separatorsToUnix(s.getSourcePath().toString())));
 
                     if (treeWalk.next()) {
-                        // Null: what was parsed is never compared to the blob here.
-                        return s.withMarkers(s.getMarkers().add(new GitTreeEntry(randomId(), treeWalk.getObjectId(0).name(), treeWalk.getRawMode(0), null)));
+                        return s.withMarkers(s.getMarkers().add(newGitTreeEntry(randomId(), treeWalk.getObjectId(0).name(), treeWalk.getRawMode(0))));
                     }
                     return s;
                 }
@@ -1583,6 +1584,62 @@ public class DefaultProjectParser implements GradleProjectParser {
                 throw new UncheckedIOException(e);
             }
         };
+    }
+
+    /**
+     * rewrite-core up to 8.90.x, the newest line on Maven Central and the one this build resolves
+     * without codegenome credentials, declares {@code GitTreeEntry(UUID, String, int)}. Later releases
+     * replaced it with a single {@code GitTreeEntry(UUID, String, int, WorkingTreeMatch)}. This isolated
+     * parser can be compiled and run against either line, so bind whichever constructor is present.
+     */
+    private static volatile @Nullable Constructor<?> gitTreeEntryConstructor;
+
+    private static GitTreeEntry newGitTreeEntry(UUID id, String objectId, int fileMode) {
+        Constructor<?> constructor = gitTreeEntryConstructor;
+        if (constructor == null) {
+            constructor = findGitTreeEntryConstructor();
+            gitTreeEntryConstructor = constructor;
+        }
+        try {
+            if (constructor.getParameterCount() == 4) {
+                // Null: what was parsed is never compared to the blob here.
+                return (GitTreeEntry) constructor.newInstance(id, objectId, fileMode, null);
+            }
+            return (GitTreeEntry) constructor.newInstance(id, objectId, fileMode);
+        } catch (InvocationTargetException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof RuntimeException) {
+                throw (RuntimeException) cause;
+            }
+            if (cause instanceof Error) {
+                throw (Error) cause;
+            }
+            throw new IllegalStateException("Unable to create a GitTreeEntry marker", cause);
+        } catch (InstantiationException | IllegalAccessException e) {
+            throw new IllegalStateException("Unable to create a GitTreeEntry marker", e);
+        }
+    }
+
+    private static Constructor<?> findGitTreeEntryConstructor() {
+        Constructor<?> legacy = null;
+        for (Constructor<?> candidate : GitTreeEntry.class.getConstructors()) {
+            Class<?>[] parameters = candidate.getParameterTypes();
+            if (parameters.length < 3 || parameters[0] != UUID.class || parameters[1] != String.class ||
+                parameters[2] != int.class) {
+                continue;
+            }
+            if (parameters.length == 4 && !parameters[3].isPrimitive()) {
+                return candidate;
+            }
+            if (parameters.length == 3) {
+                legacy = candidate;
+            }
+        }
+        if (legacy == null) {
+            throw new IllegalStateException("No supported GitTreeEntry constructor in " +
+                                            GitTreeEntry.class.getProtectionDomain().getCodeSource());
+        }
+        return legacy;
     }
 
     protected void logRecipesThatMadeChanges(Result result) {
