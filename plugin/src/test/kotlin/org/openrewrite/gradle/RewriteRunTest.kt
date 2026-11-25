@@ -570,7 +570,7 @@ class RewriteRunTest : RewritePluginTest {
         val expectedProps = """
             distributionBase=GRADLE_USER_HOME
             distributionPath=wrapper/dists
-            distributionUrl=https\://services.gradle.org/distributions/gradle-7.4.2-bin.zip
+            distributionUrl=https\://${distributionHostWrittenByUpdateGradleWrapper()}/distributions/gradle-7.4.2-bin.zip
             distributionSha256Sum=29e49b10984e585d8118b7d0bc452f944e386458df27371b49b4ac1dec4b7fda
             zipStoreBase=GRADLE_USER_HOME
             zipStorePath=wrapper/dists
@@ -579,6 +579,22 @@ class RewriteRunTest : RewritePluginTest {
         assertThat(gradlePropsFile.readText()).isEqualTo(expectedProps)
         val gradleWrapperJar = File(projectDir, "gradle/wrapper/gradle-wrapper.jar")
         assertThat(gradleWrapperJar.exists()).isTrue
+    }
+
+    /**
+     * The host UpdateGradleWrapper of the rewrite version this plugin applies writes into
+     * distributionUrl: downloads.gradle.org from rewrite 8.74.2 (openrewrite/rewrite#6823) up to,
+     * but excluding, 8.92.7 (openrewrite/rewrite#8915), services.gradle.org before and after.
+     * Without codegenome credentials, org.openrewrite resolves from Maven Central, whose newest
+     * release is 8.90.4.
+     */
+    private fun distributionHostWrittenByUpdateGradleWrapper(): String {
+        val versions = java.util.Properties()
+        RewriteExtension::class.java.getResourceAsStream("/rewrite/versions.properties")!!.use { versions.load(it) }
+        val (major, minor, patch) = versions.getProperty("org.openrewrite:rewrite-core")
+            .split('.', '-').map { it.toIntOrNull() ?: 0 } + listOf(0, 0, 0)
+        val release = (major * 1000 + minor) * 1000 + patch
+        return if (release in 8_074_002 until 8_092_007) "downloads.gradle.org" else "services.gradle.org"
     }
 
     @Test
